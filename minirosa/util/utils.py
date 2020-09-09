@@ -3,15 +3,17 @@
 """Utility functions"""
 
 import warnings
-import scipy.ndimage
-import scipy.sparse
 
 import numpy as np
-import numba
 from numpy.lib.stride_tricks import as_strided
 
-from .._cache import cache
 from .exceptions import ParameterError
+
+from .._import import lazy_import
+
+numba = lazy_import("numba")
+scipy_ndimage = lazy_import("scipy.ndimage")
+scipy_sparse = lazy_import("scipy.sparse")
 
 # Constrain STFT block sizes to 256 KB
 MAX_MEM_BLOCK = 2 ** 8 * 2 ** 10
@@ -226,7 +228,6 @@ def frame(x, frame_length, hop_length, axis=-1):
     return as_strided(x, shape=shape, strides=strides)
 
 
-@cache(level=20)
 def valid_audio(y, mono=True):
     """Determine whether a variable contains valid audio data.
 
@@ -693,7 +694,6 @@ def axis_sort(S, axis=-1, index=False, value=None):
         return S[tuple(sort_slice)]
 
 
-@cache(level=40)
 def normalize(S, norm=np.inf, axis=0, threshold=None, fill=None):
     """Normalize an array along a chosen axis.
 
@@ -1153,7 +1153,7 @@ def peak_pick(x, pre_max, post_max, pre_avg, post_avg, delta, wait):
     max_origin = np.ceil(0.5 * (pre_max - post_max))
     # Using mode='constant' and cval=x.min() effectively truncates
     # the sliding window at the boundaries
-    mov_max = scipy.ndimage.filters.maximum_filter1d(
+    mov_max = scipy_ndimage.filters.maximum_filter1d(
         x, int(max_length), mode="constant", origin=int(max_origin), cval=x.min()
     )
 
@@ -1162,7 +1162,7 @@ def peak_pick(x, pre_max, post_max, pre_avg, post_avg, delta, wait):
     avg_origin = np.ceil(0.5 * (pre_avg - post_avg))
     # Here, there is no mode which results in the behavior we want,
     # so we'll correct below.
-    mov_avg = scipy.ndimage.filters.uniform_filter1d(
+    mov_avg = scipy_ndimage.filters.uniform_filter1d(
         x, int(avg_length), mode="nearest", origin=int(avg_origin)
     )
 
@@ -1208,7 +1208,6 @@ def peak_pick(x, pre_max, post_max, pre_avg, post_avg, delta, wait):
     return np.array(peaks)
 
 
-@cache(level=40)
 def sparsify_rows(x, quantile=0.01, dtype=None):
     """Return a row-sparse matrix approximating the input
 
@@ -1292,7 +1291,7 @@ def sparsify_rows(x, quantile=0.01, dtype=None):
     if dtype is None:
         dtype = x.dtype
 
-    x_sparse = scipy.sparse.lil_matrix(x.shape, dtype=dtype)
+    x_sparse = scipy_sparse.lil_matrix(x.shape, dtype=dtype)
 
     mags = np.abs(x)
     norms = np.sum(mags, axis=1, keepdims=True)
@@ -1396,7 +1395,6 @@ def index_to_slice(idx, idx_min=None, idx_max=None, step=None, pad=True):
     return [slice(start, end, step) for (start, end) in zip(idx_fixed, idx_fixed[1:])]
 
 
-@cache(level=40)
 def sync(data, idx, aggregate=None, pad=True, axis=-1):
     """Synchronous aggregation of a multi-dimensional array between boundaries
 
@@ -1844,8 +1842,11 @@ def cyclic_gradient(data, edge_order=1, axis=-1):
     return grad[tuple(slices)]
 
 
-@numba.jit(nopython=True, cache=True)
-def __shear_dense(X, factor=+1, axis=-1):
+def __shear_dense(*args, **kwargs):
+    return numba.jit(nopython=True, cache=True)(__shear_dense2)(*args, **kwargs)
+
+
+def __shear_dense2(X, factor=+1, axis=-1):
     """Numba-accelerated shear for dense (ndarray) arrays"""
 
     if axis == 0:
@@ -1939,7 +1940,7 @@ def shear(X, factor=1, axis=-1):
     if not np.issubdtype(type(factor), np.integer):
         raise ParameterError("factor={} must be integer-valued".format(factor))
 
-    if scipy.sparse.isspmatrix(X):
+    if scipy_sparse.isspmatrix(X):
         return __shear_sparse(X, factor=factor, axis=axis)
     else:
         return __shear_dense(X, factor=factor, axis=axis)

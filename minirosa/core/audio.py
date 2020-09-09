@@ -5,16 +5,16 @@
 import pathlib
 import warnings
 
-import soundfile as sf
-import audioread
-import numpy as np
-import scipy.signal
-import resampy
+from .._import import lazy_import
 
-from numba import jit
+sf = lazy_import("soundfile")
+np = lazy_import("numpy")
+scipy_signal = lazy_import("scipy.signal")
+audioread = lazy_import("audioread")
+resampy = lazy_import("resampy")
+numba = lazy_import("numba")
+
 from .fft import get_fftlib
-from .convert import frames_to_samples, time_to_samples
-from .._cache import cache
 from .. import util
 from ..util.exceptions import ParameterError
 
@@ -34,10 +34,6 @@ __all__ = [
     "mu_compress",
     "mu_expand",
 ]
-
-# Resampling bandwidths as percentage of Nyquist
-BW_BEST = resampy.filters.get_filter("kaiser_best")[2]
-BW_FASTEST = resampy.filters.get_filter("kaiser_fast")[2]
 
 
 # -- CORE ROUTINES --#
@@ -416,7 +412,6 @@ def stream(
             yield block.T
 
 
-@cache(level=20)
 def to_mono(y):
     """Convert an audio signal to mono by averaging samples across channels.
 
@@ -456,7 +451,6 @@ def to_mono(y):
     return y
 
 
-@cache(level=20)
 def resample(
     y, orig_sr, target_sr, res_type="kaiser_best", fix=True, scale=False, **kwargs
 ):
@@ -555,7 +549,7 @@ def resample(
     n_samples = int(np.ceil(y.shape[-1] * ratio))
 
     if res_type in ("scipy", "fft"):
-        y_hat = scipy.signal.resample(y, n_samples, axis=-1)
+        y_hat = scipy_signal.resample(y, n_samples, axis=-1)
     elif res_type == "polyphase":
         if int(orig_sr) != orig_sr or int(target_sr) != target_sr:
             raise ParameterError(
@@ -568,7 +562,7 @@ def resample(
         orig_sr = int(orig_sr)
         target_sr = int(target_sr)
         gcd = np.gcd(orig_sr, target_sr)
-        y_hat = scipy.signal.resample_poly(y, target_sr // gcd, orig_sr // gcd, axis=-1)
+        y_hat = scipy_signal.resample_poly(y, target_sr // gcd, orig_sr // gcd, axis=-1)
     elif res_type in (
         "linear",
         "zero_order_hold",
@@ -738,7 +732,6 @@ def get_samplerate(path):
             return fdesc.samplerate
 
 
-@cache(level=20)
 def autocorrelate(y, max_size=None, axis=-1):
     """Bounded-lag auto-correlation
 
@@ -882,8 +875,11 @@ def lpc(y, order):
     return __lpc(y, order)
 
 
-@jit(nopython=True)
-def __lpc(y, order):
+def __lpc(*args, **kwargs):
+    return numba.jit(nopython=True)(__lpc2)(*args, **kwargs)
+
+
+def __lpc2(y, order):
     # This implementation follows the description of Burg's algorithm given in
     # section III of Marple's paper referenced in the docstring.
     #
@@ -970,7 +966,6 @@ def __lpc(y, order):
     return ar_coeffs
 
 
-@cache(level=20)
 def zero_crossings(
     y, threshold=1e-10, ref_magnitude=None, pad=True, zero_pos=True, axis=-1
 ):
@@ -1186,6 +1181,7 @@ def clicks(
     >>> ax[0].label_outer()
     >>> ax[0].set_title(None)
     """
+    from .convert import frames_to_samples, time_to_samples
 
     # Compute sample positions from time or frames
     if times is None:
@@ -1413,7 +1409,7 @@ def chirp(fmin, fmax, sr=22050, length=None, duration=None, linear=False, phi=No
         phi = -np.pi * 0.5
 
     method = "linear" if linear else "logarithmic"
-    return scipy.signal.chirp(
+    return scipy_signal.chirp(
         np.arange(duration, step=period),
         fmin,
         duration,
